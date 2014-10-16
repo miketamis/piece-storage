@@ -1,0 +1,26 @@
+{
+  "name": "piece-storage",
+  "version": "0.0.1",
+  "description": "holds a file in pieces. create for use in a Bit Torrent client.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/miketamis/piece-storage.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/miketamis/piece-storage/issues"
+  },
+  "homepage": "https://github.com/miketamis/piece-storage",
+  "dependencies": {
+    "bitfield": "^1.0.2",
+    "block-stream": "0.0.7",
+    "debug": "^2.1.0",
+    "dezalgo": "^1.0.1",
+    "git-sha1": "^0.1.2"
+  }
+}
