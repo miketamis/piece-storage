@@ -1,6 +1,6 @@
 {
   "name": "piece-storage",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "holds a file in pieces. create for use in a Bit Torrent client.",
   "main": "index.js",
   "scripts": {
