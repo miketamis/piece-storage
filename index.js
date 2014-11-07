@@ -9,6 +9,8 @@ var EventEmitter = require('events').EventEmitter
 var extend = require('extend.js')
 var FileStream = require('./file-stream')
 var inherits = require('inherits')
+var MultiStream = require('multistream')
+var once = require('once')
 var sha1 = require('git-sha1')
 var stream = require('stream')
 
@@ -128,7 +130,7 @@ Piece.prototype.verify = function (buffer) {
     return
   }
 
-  self.verified = true//(sha1(buffer) === self.hash)
+  self.verified = (sha1(buffer) === self.hash)
   if (self.verified) {
     self.emit('done')
   } else {
@@ -138,7 +140,6 @@ Piece.prototype.verify = function (buffer) {
 }
 
 Piece.prototype._verifyOffset = function (offset) {
-  return true
   var self = this
   if (offset % BLOCK_LENGTH === 0) {
     return true
@@ -150,7 +151,6 @@ Piece.prototype._verifyOffset = function (offset) {
 
 Piece.prototype._verifyBlock = function (offset, buffer) {
   var self = this
-  return true; 
   if (buffer.length === BLOCK_LENGTH) {
     // normal block length
     return true
@@ -245,7 +245,6 @@ File.prototype.createReadStream = function (opts) {
   }, opts)
 
   var stream = new FileStream(self, opts)
-  self.storage.on('piece', stream.notify.bind(stream));
   self.storage.emit('select', stream.startPiece, stream.endPiece, true, stream.notify.bind(stream))
   eos(stream, function () {
     self.storage.emit('deselect', stream.startPiece, stream.endPiece, true)
@@ -276,56 +275,39 @@ inherits(Storage, EventEmitter)
  * @param {Object} parsedTorrent
  * @param {Object} opts
  */
-function Storage (opts) {
+function Storage (parsedTorrent, opts) {
   var self = this
   EventEmitter.call(self)
   opts = opts || {}
 
-  self.bitfield = new BitField(opts.numPieces)
+  self.bitfield = new BitField(parsedTorrent.pieces.length)
 
   self.done = false
   self.closed = false
-  self.readonly = false
+  self.readonly = true
 
   if (!opts.nobuffer) {
-    self.buffer = new Buffer(opts.length)
+    self.buffer = new Buffer(parsedTorrent.length)
   }
 
-  var pieceLength = opts.pieceLength
-  self.pieceLength = pieceLength
-  var lastPieceLength = opts.lastPieceLength
-  var numPieces = opts.numPieces
-  if(!opts.noHash) {
-    self.pieces = opts.pieces.map(function (hash, index) {
-      var start = index * pieceLength
-      var end = start + (index === numPieces - 1 ? lastPieceLength : pieceLength)
+  var pieceLength = self.pieceLength = parsedTorrent.pieceLength
+  var lastPieceLength = parsedTorrent.lastPieceLength
+  var numPieces = parsedTorrent.pieces.length
 
-      // if we're backed by a buffer, the piece's buffer will reference the same memory.
-      // otherwise, the piece's buffer will be lazily created on demand
-      var buffer = (self.buffer ? self.buffer.slice(start, end) : end - start)
+  self.pieces = parsedTorrent.pieces.map(function (hash, index) {
+    var start = index * pieceLength
+    var end = start + (index === numPieces - 1 ? lastPieceLength : pieceLength)
 
-      var piece = new Piece(index, hash, buffer)
-      piece.on('done', self._onPieceDone.bind(self, piece))
-      return piece
-    })
-  } else {
-    self.pieces = [];
-    for (var index = 0; index < numPieces; index++) {
-      var start = index * pieceLength
-      var end = start + (index === numPieces - 1 ? lastPieceLength : pieceLength)
+    // if we're backed by a buffer, the piece's buffer will reference the same memory.
+    // otherwise, the piece's buffer will be lazily created on demand
+    var buffer = (self.buffer ? self.buffer.slice(start, end) : end - start)
 
-      // if we're backed by a buffer, the piece's buffer will reference the same memory.
-      // otherwise, the piece's buffer will be lazily created on demand
-      var buffer = (self.buffer ? self.buffer.slice(start, end) : end - start)
+    var piece = new Piece(index, hash, buffer)
+    piece.on('done', self._onPieceDone.bind(self, piece))
+    return piece
+  })
 
-      var piece = new Piece(index, null, buffer)
-      piece.on('done', self._onPieceDone.bind(self, piece))
-      self.pieces[index] = piece;
-    }
-  }
-    
-
-  self.files = opts.files.map(function (fileObj) {
+  self.files = parsedTorrent.files.map(function (fileObj) {
     var start = fileObj.offset
     var end = start + fileObj.length - 1
 
@@ -341,12 +323,15 @@ function Storage (opts) {
 
 Storage.BLOCK_LENGTH = BLOCK_LENGTH
 
-Storage.writeToStorage = function (storage, buf, pieceLength, cb) {
+Storage.prototype.load = function (streams, cb) {
+  var self = this
+  if (!Array.isArray(streams)) streams = [ streams ]
+  if (!cb) cb = function () {}
+  cb = once(cb)
+
   var pieceIndex = 0
-  var bufStream = new stream.Readable()
-  bufStream._read = function () {}
-  bufStream
-    .pipe(new BlockStream(pieceLength, { nopad: true }))
+  ;(new MultiStream(streams))
+    .pipe(new BlockStream(self.pieceLength, { nopad: true }))
     .on('data', function (piece) {
       var index = pieceIndex
       pieceIndex += 1
@@ -357,10 +342,9 @@ Storage.writeToStorage = function (storage, buf, pieceLength, cb) {
         var offset = blockIndex * BLOCK_LENGTH
         blockIndex += 1
 
-        storage.writeBlock(index, offset, block)
+        self.writeBlock(index, offset, block)
       })
-      s.write(piece)
-      s.end()
+      s.end(piece)
     })
     .on('end', function () {
       cb(null)
@@ -368,9 +352,6 @@ Storage.writeToStorage = function (storage, buf, pieceLength, cb) {
     .on('error', function (err) {
       cb(err)
     })
-
-  bufStream.push(buf)
-  bufStream.push(null)
 }
 
 Object.defineProperty(Storage.prototype, 'downloaded', {
